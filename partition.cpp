@@ -3265,11 +3265,22 @@ bool TWPartition::Update_Size(bool Display_Error) {
 
 	if (Has_Data_Media) {
 		if (Mount(Display_Error)) {
-			Used = backup_exclusions.Get_Folder_Size(Mount_Point);
-			Backup_Size = Used;
-			int bak = (int)(Used / 1048576LLU);
-			int fre = (int)(Free / 1048576LLU);
-			LOGINFO("Data backup size is %iMB, free: %iMB.\n", bak, fre);
+			/*
+			 * Avoid recursively scanning credential-encrypted data before
+			 * FBE decryption. Update_System_Details() recalculates the
+			 * actual backup size after decryption.
+			 */
+			if (Is_Encrypted && !Is_Decrypted) {
+			        Used = Size - Free;
+			        Backup_Size = 0;
+			        LOGINFO("Skipping data backup size calculation until decryption.\n");
+			} else {
+			        Used = backup_exclusions.Get_Folder_Size(Mount_Point);
+			        Backup_Size = Used;
+			        int bak = (int)(Used / 1048576LLU);
+			        int fre = (int)(Free / 1048576LLU);
+			        LOGINFO("Data backup size is %iMB, free: %iMB.\n", bak, fre);
+			}
 		} else {
 			if (!Was_Already_Mounted)
 				UnMount(false);
