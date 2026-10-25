@@ -582,9 +582,9 @@ void DataManager::SetDefaultValues()
 	mConst.SetValue(TW_VERSION_VAR, TW_VERSION_STR);
 
 #ifndef TW_NO_HAPTICS
-	mPersist.SetValue("tw_button_vibrate", "80");
-	mPersist.SetValue("tw_keyboard_vibrate", "40");
-	mPersist.SetValue("tw_action_vibrate", "160");
+	mPersist.SetValue("tw_button_vibrate", "9");
+	mPersist.SetValue("tw_keyboard_vibrate", "9");
+	mPersist.SetValue("tw_action_vibrate", "35");
 	mConst.SetValue("tw_disable_haptics", "0");
 #else
 	LOGINFO("TW_NO_HAPTICS := true\n");
@@ -1152,6 +1152,21 @@ void DataManager::Vibrate(const string& varName)
 	int vib_value = 0;
 	GetValue(varName, vib_value);
 	if (vib_value) {
+              if (varName == "tw_button_vibrate" || varName == "tw_keyboard_vibrate") {
+			if (vib_value == 40 || vib_value >= 80) {
+				vib_value = 9;
+				SetValue(varName, 9);
+			} else if (vib_value > 30) {
+				vib_value = 30;
+			}
+		} else if (varName == "tw_action_vibrate") {
+			if (vib_value == 160 || vib_value >= 150) {
+				vib_value = 35;
+				SetValue(varName, 35);
+			} else if (vib_value > 70) {
+				vib_value = 70;
+			}
+		}
 		vibrate(vib_value);
 	}
 #endif
