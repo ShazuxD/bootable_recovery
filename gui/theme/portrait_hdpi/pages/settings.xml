@@ -589,7 +589,7 @@
 
 			<slidervalue>
 				<placement x="%slider_x%" y="%row1_3_y%" w="%slidervalue_w%"/>
-				<data variable="tw_button_vibrate" min="0" max="300" showrange="0" showcurr="0" changeondrag="1"/>
+				<data variable="tw_button_vibrate" min="0" max="30" showrange="0" showcurr="0" changeondrag="1"/>
 			</slidervalue>
 
 			<text style="text_body1">
@@ -606,7 +606,7 @@
 
 			<slidervalue>
 				<placement x="%slider_x%" y="%row3_1a_y%" w="%slidervalue_w%"/>
-				<data variable="tw_keyboard_vibrate" min="0" max="300" showrange="0" showcurr="0" changeondrag="1"/>
+				<data variable="tw_keyboard_vibrate" min="0" max="30" showrange="0" showcurr="0" changeondrag="1"/>
 			</slidervalue>
 
 			<text style="text_body1">
@@ -623,7 +623,7 @@
 
 			<slidervalue>
 				<placement x="%slider_x%" y="%row4_3_y%" w="%slidervalue_w%"/>
-				<data variable="tw_action_vibrate" min="0" max="500" showrange="0" showcurr="0" changeondrag="1"/>
+				<data variable="tw_action_vibrate" min="0" max="70" showrange="0" showcurr="0" changeondrag="1"/>
 			</slidervalue>
 
 			<template name="gestures"/>
