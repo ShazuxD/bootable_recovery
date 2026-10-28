@@ -65,6 +65,7 @@
 #include "data.hpp"
 #include "startupArgs.hpp"
 #include "twrp-functions.hpp"
+#include "mergedbg.hpp"
 #include "fixContexts.hpp"
 #include "exclude.hpp"
 #include "set_metadata.h"
@@ -1768,13 +1769,20 @@ int TWPartitionManager::Format_Data(void) {
 
 	if (dat != NULL) {
 		if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+			LOGINFO("[mergedbg] Format_Data: VAB path, /metadata partition %s, mounted before=%d\n",
+					metadata != NULL ? "found" : "MISSING", metadata != NULL ? metadata->Is_Mounted() : -1);
 #ifndef TW_EXCLUDE_APEX
 			twrpApex apex;
 			apex.Unmount();
 #endif
-			if (metadata != NULL)
-				metadata->Mount(true);
-			if (!Check_Pending_Merges())
+			if (metadata != NULL) {
+				bool md_ok = metadata->Mount(true);
+				LOGINFO("[mergedbg] Format_Data: /metadata Mount(true)=%d, mounted now=%d\n", md_ok,
+						metadata->Is_Mounted());
+			}
+			bool merge_ok = Check_Pending_Merges();
+			LOGINFO("[mergedbg] Format_Data: Check_Pending_Merges returned %d\n", merge_ok);
+			if (!merge_ok)
 				return false;
 		}
 		ret = dat->Wipe_Encryption();
@@ -3729,6 +3737,10 @@ void TWPartitionManager::Unlock_Block_Partitions() {
 
 bool TWPartitionManager::Unmap_Super_Devices() {
 	bool destroyed = false;
+	int dbg_super_parts = 0;
+	LOGINFO("[mergedbg] Unmap_Super_Devices: start, slot_display=%s suffix=%s tw_has_boot_slots=%s\n",
+			Get_Active_Slot_Display().c_str(), Get_Active_Slot_Suffix().c_str(),
+			DataManager::GetStrValue("tw_has_boot_slots").c_str());
 #ifndef TW_EXCLUDE_APEX
 	twrpApex apex;
 	apex.Unmount();
@@ -3744,37 +3756,67 @@ bool TWPartitionManager::Unmap_Super_Devices() {
 			(*iter)->UnMount(false);
 			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
 			destroyed = DestroyLogicalPartition(blk_device_partition);
+			dbg_super_parts++;
+			LOGINFO("[mergedbg] DestroyLogicalPartition(%s) -> %d\n", blk_device_partition.c_str(), destroyed);
 			std::string cow_partition = blk_device_partition + "-cow";
 			std::string cow_partition_path = "/dev/block/mapper/" + cow_partition;
 			struct stat st;
 			if (lstat(cow_partition_path.c_str(), &st) == 0) {
 				LOGINFO("removing cow partition: %s\n", cow_partition.c_str());
 				destroyed = DestroyLogicalPartition(cow_partition);
+				LOGINFO("[mergedbg] DestroyLogicalPartition(%s) -> %d\n", cow_partition.c_str(), destroyed);
 			}
 			iter = Partitions.erase(iter);
 			delete part;
 			if (!destroyed) {
+				LOGINFO("[mergedbg] Unmap_Super_Devices: giving up after a failed destroy\n");
 				return false;
 			}
 		} else {
 			++iter;
 		}
 	}
+	LOGINFO("[mergedbg] Unmap_Super_Devices: done, %d super partition(s) were in TWRP's list\n", dbg_super_parts);
 	return true;
 }
 
 
+static const char* MergeDbg_State_Name(android::snapshot::UpdateState st) {
+	// Order matches libsnapshot's UpdateState enum on android-12.1.
+	static const char* names[] = {"None", "Initiated", "Unverified", "Merging",
+								  "MergeNeedsReboot", "MergeCompleted", "MergeFailed",
+								  "Cancelled"};
+	unsigned v = static_cast<unsigned>(st);
+	return v < (sizeof(names) / sizeof(names[0])) ? names[v] : "unknown";
+}
+
 bool TWPartitionManager::Check_Pending_Merges() {
+	LOGINFO("[mergedbg] Check_Pending_Merges: slot_display=%s suffix=%s ro.boot.slot_suffix='%s' virtual_ab=%d compression=%d\n",
+			Get_Active_Slot_Display().c_str(), Get_Active_Slot_Suffix().c_str(),
+			android::base::GetProperty("ro.boot.slot_suffix", "").c_str(),
+			android::base::GetBoolProperty("ro.virtual_ab.enabled", false),
+			android::base::GetBoolProperty("ro.virtual_ab.compression.enabled", false));
+	MergeDbg_Snapshot("Check_Pending_Merges start");
+
 	auto sm = android::snapshot::SnapshotManager::NewForFirstStageMount();
 	if (!sm) {
 		LOGERR("Unable to call snapshot manager\n");
 		return false;
 	}
 
+	// Read-only peek at libsnapshot's state; this is what decides what HandleImminentDataWipe does.
+	double dbg_progress = 0;
+	auto dbg_state = sm->GetUpdateState(&dbg_progress);
+	LOGINFO("[mergedbg] update state=%s (%u) progress=%.2f, forward-merge indicator present=%d\n",
+			MergeDbg_State_Name(dbg_state), static_cast<unsigned>(dbg_state), dbg_progress,
+			MergeDbg_Has_Entry("/metadata/ota", "forward-merge"));
+
 	if (!Unmap_Super_Devices()) {
+		MergeDbg_Snapshot("after FAILED Unmap_Super_Devices");
 		LOGERR("Unable to unmap dynamic partitions.\n");
 		return false;
 	}
+	MergeDbg_Snapshot("after Unmap_Super_Devices");
 
 	auto callback = [&]() -> void {
 		double progress;
@@ -3783,9 +3825,24 @@ bool TWPartitionManager::Check_Pending_Merges() {
 	};
 
 	LOGINFO("checking for merges\n");
-	if (!sm->HandleImminentDataWipe(callback)) {
+	bool dbg_ok = sm->HandleImminentDataWipe(callback);
+	LOGINFO("[mergedbg] HandleImminentDataWipe returned %d\n", dbg_ok);
+	if (!dbg_ok) {
+		// libsnapshot leaves partially created devices behind on failure; compare with the
+		// "after Unmap_Super_Devices" dump above - new entries are what it created before failing.
+		MergeDbg_Snapshot("after FAILED HandleImminentDataWipe");
+		// Only ignore the failure when no update is pending (state None/Initiated), e.g. after a
+		// sideload that overwrote partitions directly. If a snapshot-based update is pending
+		// (Unverified/Merging/...), part of the new ROM can live in COW images stored on /data,
+		// so wiping /data now could break the freshly flashed slot: keep refusing in that case.
+		if (dbg_state == android::snapshot::UpdateState::None ||
+			dbg_state == android::snapshot::UpdateState::Initiated) {
+			LOGERR("Unable to check merge status, but no update is pending: merge check skipped\n");
+			return true;
+		}
 		LOGERR("Unable to check merge status\n");
 		return false;
 	}
+	MergeDbg_Snapshot("after merge check ok");
 	return true;
 }

@@ -56,6 +56,7 @@
 #include "twinstall.h"
 #include "installcommand.h"
 #include "../twrpRepacker.hpp"
+#include "../mergedbg.hpp"
 extern "C" {
 	#include "gui/gui.h"
 }
@@ -338,14 +339,21 @@ int TWinstall_zip(const char* path, int* wipe_cache, bool check_for_digest) {
 			PartitionManager.UnMount_By_Path("/vendor", false);
 			PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
 			if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
-				PartitionManager.Unmap_Super_Devices();
+				MergeDbg_Snapshot("twinstall: before pre-flash Unmap_Super_Devices");
+				bool dbg_unmap_ok = PartitionManager.Unmap_Super_Devices();
+				LOGINFO("[mergedbg] twinstall: pre-flash Unmap_Super_Devices -> %d\n", dbg_unmap_ok);
+				MergeDbg_Snapshot("twinstall: after pre-flash Unmap_Super_Devices");
 			}
 
 			ret_val = Run_Update_Binary(path, wipe_cache, AB_OTA_ZIP_TYPE);
+			LOGINFO("[mergedbg] twinstall: Run_Update_Binary returned %d\n", ret_val);
 
 			if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+				MergeDbg_Snapshot("twinstall: right after Run_Update_Binary");
 				PartitionManager.Unlock_Block_Partitions();
-				PartitionManager.Prepare_All_Super_Volumes();
+				bool dbg_prep_ok = PartitionManager.Prepare_All_Super_Volumes();
+				LOGINFO("[mergedbg] twinstall: Prepare_All_Super_Volumes -> %d\n", dbg_prep_ok);
+				MergeDbg_Snapshot("twinstall: after Prepare_All_Super_Volumes");
 				gui_warn("mount_vab_partitions=Devices on super may not mount until rebooting recovery.");
 			}
 			gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
